@@ -43,7 +43,6 @@ def pick_threshold_max_precision(y_true, y_scores):
     if y_scores is None:
         return 0.5, None, None
     p, r, t = precision_recall_curve(y_true, y_scores)
-    # thresholds t has length len(p) - 1; use p[:-1], r[:-1] to align with t
     p_cut = p[:-1]
     r_cut = r[:-1]
     if len(p_cut) == 0:
@@ -53,12 +52,11 @@ def pick_threshold_max_precision(y_true, y_scores):
     return thr, p_cut[best], r_cut[best]
 
 
-# PREPROCESSING
+# Użycie pliku zip - wynika z ograniczeń GitHuba
 def load_data(path="creditcard.csv"):
     import os
     import zipfile
     import io
-    # Try common filename variants: CSV, zipped CSV, gzipped CSV
     candidates = [path, f"{path}.zip" if not path.endswith(".zip") else path,
                   f"{path}.gz" if not path.endswith(".gz") else path]
 
@@ -70,9 +68,7 @@ def load_data(path="creditcard.csv"):
     if chosen is None:
         raise FileNotFoundError(f"Nie znaleziono pliku: {path} / {path}.zip / {path}.gz")
 
-    # Read depending on extension
     if chosen.lower().endswith(".zip"):
-        # Open first CSV inside the ZIP (or the only one)
         with zipfile.ZipFile(chosen) as zf:
             members = [n for n in zf.namelist() if n.lower().endswith('.csv')]
             if not members:
@@ -80,7 +76,6 @@ def load_data(path="creditcard.csv"):
             with zf.open(members[0]) as f:
                 df = pd.read_csv(f)
     else:
-        # Let pandas infer compression for .gz or plain .csv
         df = pd.read_csv(chosen, compression='infer')
 
     # Usuwamy Time i log-transform Amount – tak jak dotychczas
@@ -137,9 +132,8 @@ def train_random_forest(Xb, yb):
     rf.fit(Xb, yb)
     return rf
 
-# Autoencoder as a third model (trained on normals only; own scaler)
+# Autoencoder
 def train_and_evaluate_autoencoder(X_train, X_test, y_train, y_test):
-    # fit scaler on normals only
     normals = X_train[y_train == 0]
     scaler = StandardScaler()
     Xn = scaler.fit_transform(normals)
@@ -172,7 +166,6 @@ def train_and_evaluate_autoencoder(X_train, X_test, y_train, y_test):
     autoencoder.fit(Xn, Xn, epochs=100, batch_size=128, validation_split=0.1,
                     shuffle=True, callbacks=[es], verbose=1)
 
-    # anomaly score: mean |z-diff| per sample
     test_recon = autoencoder.predict(Xt, verbose=0)
     diff = Xt - test_recon
     feat_std = Xn.std(axis=0, ddof=0)
@@ -180,7 +173,6 @@ def train_and_evaluate_autoencoder(X_train, X_test, y_train, y_test):
     z_diff = diff / (feat_std + 1e-8)
     score = np.mean(np.abs(z_diff), axis=1)
 
-    # thresholds from train normals
     train_recon = autoencoder.predict(Xn, verbose=0)
     train_diff = Xn - train_recon
     train_z = train_diff / (feat_std + 1e-8)
@@ -195,7 +187,6 @@ def train_and_evaluate_autoencoder(X_train, X_test, y_train, y_test):
         print(confusion_matrix(y_test, y_pred))
         print(classification_report(y_test, y_pred, digits=4))
 
-        # optional latent-space filter for precision
         from sklearn.ensemble import IsolationForest
         lat_train = encoder.predict(Xn, verbose=0)
         lat_test = encoder.predict(Xt, verbose=0)
@@ -210,7 +201,6 @@ def train_and_evaluate_autoencoder(X_train, X_test, y_train, y_test):
     print("ROC AUC:", roc_auc_score(y_test, score))
     print("PR AUC (Average Precision):", average_precision_score(y_test, score))
 
-    # fixed threshold for reference
     thr_fixed = 4.0
     y_pred_fixed = (score > thr_fixed).astype(int)
     print("\n=== Confusion matrix (AE fixed threshold = 4.0) ===")
@@ -239,7 +229,7 @@ def main():
     # 4) [2] Zbilansowanie częściowe (undersampling ~1:5) TYLKO na TRAIN
     Xb, yb = partial_balance_train(X_train_s, y_train)
 
-    # --- Model 1: Logistic Regression ---
+    #  Model 1: Logistic Regression
     logreg = train_logreg(Xb, yb)
     y_pred_lr = logreg.predict(X_test_s)
     y_sc_lr = (logreg.decision_function(X_test_s)
@@ -253,7 +243,7 @@ def main():
         y_pred_lr_thr = (y_sc_lr >= thr_lr).astype(int)
         evaluate_model(f"Logistic Regression (thr_maxP={thr_lr:.3f})", y_test, y_pred_lr_thr, y_sc_lr)
 
-    # --- Model 2: Random Forest ---
+    #  Model 2: Random Forest
     rf = train_random_forest(Xb, yb)
     y_pred_rf = rf.predict(X_test_s)
     y_sc_rf = rf.predict_proba(X_test_s)[:, 1] if hasattr(rf, "predict_proba") else None
@@ -265,7 +255,7 @@ def main():
         y_pred_rf_thr = (y_sc_rf >= thr_rf).astype(int)
         evaluate_model(f"Random Forest (thr_maxP={thr_rf:.3f})", y_test, y_pred_rf_thr, y_sc_rf)
 
-    # --- Model 3: Autoencoder ---
+    #  Model 3: Autoencoder
     train_and_evaluate_autoencoder(X_train, X_test, y_train, y_test)
 
 if __name__ == "__main__":
